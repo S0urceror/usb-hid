@@ -175,6 +175,7 @@ const uint8_t RD_DATA_MULTIPLE = 6;
 const uint8_t WR_DATA_MULTIPLE = 7;
 
 // LOW_LEVEL serial communication to CH376
+///////////////////////////////////////////////////////////////////////////
 void writeCommand (uint8_t command)
 {
     uint8_t cmd[] = {WR_COMMAND,command};
@@ -214,6 +215,7 @@ ssize_t readStatus (uint8_t* new_value)
 }
 
 // CHECK STATUS
+///////////////////////////////////////////////////////////////////////////
 uint8_t waitInterrupt ()
 {
     uint8_t status,interrupt;
@@ -244,6 +246,7 @@ void check_exists ()
         error ("ERROR: device does not exist\n");
 }
 // CH376 built-in commands
+///////////////////////////////////////////////////////////////////////////
 void reset_all ()
 {
     writeCommand (CH375_CMD_RESET_ALL);
@@ -359,6 +362,7 @@ void get_configuration_descriptor ()
 */
 
 // Higher level USB read/write
+///////////////////////////////////////////////////////////////////////////
 void write_usb_data (uint8_t* message,uint8_t length)
 {
     writeCommand (CH375_CMD_WR_HOST_DATA);
@@ -387,6 +391,7 @@ ssize_t read_usb_data (uint8_t* pBuffer)
     return bytes;
 }
 // USB data packet input
+///////////////////////////////////////////////////////////////////////////
 uint8_t* data_in_transfer (uint16_t length, uint8_t target_device_address, uint8_t endpoint_number, uint8_t endpoint_packetsize, uint8_t& direction)
 {
     uint16_t remaining_data_length = length;
@@ -411,6 +416,7 @@ uint8_t* data_in_transfer (uint16_t length, uint8_t target_device_address, uint8
     return pBuffer;
 }
 // USB data packet output
+///////////////////////////////////////////////////////////////////////////
 uint8_t* data_out_transfer (uint8_t* pBuffer,uint16_t length, uint8_t target_device_address, uint8_t endpoint_number, uint8_t endpoint_packetsize, uint8_t direction)
 {
     uint8_t* pTemp = pBuffer;
@@ -434,6 +440,7 @@ uint8_t* data_out_transfer (uint8_t* pBuffer,uint16_t length, uint8_t target_dev
 #define IN 1
 #define OUT 0
 // USB command execution via SETUP, DATA, STATUS stages
+///////////////////////////////////////////////////////////////////////////
 uint8_t* execute_control_transfer (uint8_t target_device_address,uint8_t message[8],uint8_t* senddata, uint8_t endpoint_packet_size)
 {
     uint8_t* result;
@@ -481,6 +488,7 @@ uint8_t* execute_control_transfer (uint8_t target_device_address,uint8_t message
     return result;
 }
 // DESCRIPTOR commands
+///////////////////////////////////////////////////////////////////////////
 uint8_t max_packet_size = 8;
 bool get_device_descriptor2 ()
 {
@@ -568,6 +576,7 @@ std::string get_string2 (uint8_t target_device_address,uint8_t string_id)
     return str8;
 }
 // USB HID COMMANDS
+///////////////////////////////////////////////////////////////////////////
 bool set_protocol2 (uint8_t target_device_address,uint8_t protocol_id,uint8_t interface)
 {
     uint8_t cmd[] = {0x21,0x0B,protocol_id,0,interface,0,0,0};
@@ -585,6 +594,7 @@ bool set_idle2 (uint8_t target_device_address,uint8_t duration,uint8_t report_id
     return true;
 }
 // USB COMMANDS
+///////////////////////////////////////////////////////////////////////////
 bool set_address2 (uint8_t target_device_address)
 {
     uint8_t cmd[] = {0x00,0x05,target_device_address,0,0,0,0,0};
@@ -602,6 +612,7 @@ bool set_configuration2 (uint8_t target_device_address,uint8_t configuration_id)
     return true;
 }
 // USB HID BOOT DEVICE INTERRUPT READOUT
+///////////////////////////////////////////////////////////////////////////
 bool read_boot_mouse (uint8_t target_device_address,uint8_t mouse_endpoint_id,uint8_t mouse_millis,uint16_t mouse_in_packetsize)
 {
     uint8_t direction = 0;
