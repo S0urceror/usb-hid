@@ -59,6 +59,9 @@ int serial=-1;
 #define CH375_USB_INT_BUF_OVER 0x17
 #define CH375_USB_INT_USB_READY 0x18
 
+#define CH375_CMD_RET_SUCCESS 0x51
+#define CH375_CMD_RET_ABORT 0x52
+
 #define CH375_USB_DEVICE_DESCRIPTOR 0x01
 #define CH375_USB_CONFIGURATION_DESCRIPTOR 0x02
 #define CH375_USB_INTERFACE_DESCRIPTOR 0x04
@@ -171,6 +174,7 @@ const uint8_t WR_COMMAND = 1;
 const uint8_t RD_STATUS = 2;
 const uint8_t WR_DATA = 3;
 const uint8_t RD_DATA = 4;
+const uint8_t RD_INT = 5;
 const uint8_t RD_DATA_MULTIPLE = 6;
 const uint8_t WR_DATA_MULTIPLE = 7;
 
@@ -213,19 +217,24 @@ ssize_t readStatus (uint8_t* new_value)
     write (serial,cmd,sizeof(cmd));
     return read (serial,new_value,1);
 }
+ssize_t readInterrupt (uint8_t* new_value)
+{
+    uint8_t cmd[] = {RD_INT};
+    write (serial,cmd,sizeof(cmd));
+    return read (serial,new_value,1);
+}
 
 // CHECK STATUS
 ///////////////////////////////////////////////////////////////////////////
 uint8_t waitInterrupt ()
 {
     uint8_t status,interrupt;
-    //int i=0;
+    int i=0;
     ssize_t bytes;
-    while ((bytes=readStatus(&interrupt)))
+    while ((bytes=readInterrupt(&interrupt)))
     {
         if (interrupt&0x80)
             break;
-        usleep (1000);
     }
     writeCommand(CH375_CMD_GET_STATUS);
     bytes = readData (&status);
@@ -242,7 +251,7 @@ void check_exists ()
     writeData(value);
     ssize_t bytes = readData (&new_value);
     value = value ^ 255;
-    if (bytes!=1 && new_value != value)
+    if (bytes!=1 || (new_value != value))
         error ("ERROR: device does not exist\n");
 }
 // CH376 built-in commands
@@ -259,17 +268,27 @@ void set_target_device_address (uint8_t address)
     sleep (0.2);
 }
 
-void set_usb_host_mode (uint8_t mode)
+bool set_usb_host_mode (uint8_t mode)
 {
     writeCommand(CH375_CMD_SET_USB_MODE);
     writeData(mode);
+    
+    uint8_t value;
+    for(int i=0; i!=50; i++ )
+    {
+        readData(&value);
+        if ( value == CH375_CMD_RET_SUCCESS )
+            return true;
+        usleep(1000);
+    }
+    return false;
 }
 void set_speed (uint8_t speed)
 {
     writeCommand (CH375_CMD_SET_USB_SPEED);
     writeData(speed);
 }
-/*
+
 void set_address (uint8_t address)
 {
      writeCommand (CH375_CMD_SET_ADDRESS);
@@ -284,7 +303,7 @@ void set_configuration (uint8_t configuration)
      if (waitInterrupt ()!=CH375_USB_INT_SUCCESS)
          error ("ERROR: configuration not set\n");
 }
-void get_device_descriptor ()
+bool get_device_descriptor ()
 {
     uint8_t value;
     ssize_t bytes;
@@ -305,6 +324,7 @@ void get_device_descriptor ()
     }
     else
         error ("ERROR: USB device descriptor not read 3\n");
+    return true;
 }
 
 void get_configuration_descriptor ()
@@ -359,7 +379,7 @@ void get_configuration_descriptor ()
         }
     }
 }
-*/
+
 
 // Higher level USB read/write
 ///////////////////////////////////////////////////////////////////////////
@@ -398,14 +418,16 @@ uint8_t* data_in_transfer (uint16_t length, uint8_t target_device_address, uint8
     uint8_t* pBuffer = (uint8_t*) malloc (length);
     bzero(pBuffer, length);
     uint8_t* pTemp = pBuffer;
+    uint8_t status;
     
     set_target_device_address(target_device_address);
     
     while (remaining_data_length>0)
     {
         issue_token(endpoint_number, CH_PID_IN, direction, 0);
-        while ((waitInterrupt()&0x2f)==0x2a); // absorb NAK
         direction = direction ^ 1;
+        if ((status=waitInterrupt())!=CH375_USB_INT_SUCCESS)
+            break;
         ssize_t bytes = read_usb_data (pTemp);
         remaining_data_length -= bytes;
         pTemp += bytes;
@@ -616,34 +638,40 @@ bool set_configuration2 (uint8_t target_device_address,uint8_t configuration_id)
 bool read_boot_mouse (uint8_t target_device_address,uint8_t mouse_endpoint_id,uint8_t mouse_millis,uint16_t mouse_in_packetsize)
 {
     uint8_t direction = 0;
-    uint8_t* buffer = data_in_transfer(mouse_in_packetsize, target_device_address,mouse_endpoint_id, max_packet_size, direction);
-    uint8_t buttonstate = buffer[0];
-    uint8_t x = buffer[1];
-    uint8_t y = buffer[2];
-    printf ("left: %d, right: %d, middle: %d - X: %d, Y: %d\n",buttonstate&0x01,buttonstate&0x02,buttonstate&0x04,x,y);
-    free (buffer);
-    std::this_thread::sleep_for(std::chrono::milliseconds(mouse_millis));
-    if (buttonstate&0x02) //right button
-        return false;
+    while (true)
+    {
+        uint8_t* buffer = data_in_transfer(mouse_in_packetsize, target_device_address,mouse_endpoint_id, max_packet_size, direction);
+        uint8_t buttonstate = buffer[0];
+        uint8_t x = buffer[1];
+        uint8_t y = buffer[2];
+        printf ("left: %d, right: %d, middle: %d - X: %d, Y: %d\n",buttonstate&0x01,buttonstate&0x02,buttonstate&0x04,x,y);
+        free (buffer);
+        std::this_thread::sleep_for(std::chrono::milliseconds(mouse_millis));
+        if (buttonstate&0x02) //right button
+            return false;
+    }
     return true;
 }
 bool read_boot_keyboard (uint8_t target_device_address,uint8_t endpoint_id,uint8_t millis,uint16_t in_packetsize)
 {
     uint8_t direction = 0;
-    uint8_t* buffer = data_in_transfer(in_packetsize, target_device_address,endpoint_id, max_packet_size, direction);
-    uint8_t modifier_keys = buffer[0];
-    uint8_t reserved = buffer[1];
-    uint8_t keycode1 = buffer[2];
-    uint8_t keycode2 = buffer[3];
-    uint8_t keycode3 = buffer[4];
-    uint8_t keycode4 = buffer[5];
-    uint8_t keycode5 = buffer[6];
-    uint8_t keycode6 = buffer[7];
-    printf ("modifier_keys: %02X, keycode1:%02X, keycode2:%02X, keycode3:%02X, keycode4:%02X, keycode5:%02X, keycode6:%02X\n",modifier_keys,keycode1,keycode2,keycode3,keycode4,keycode5,keycode6);
-    free (buffer);
-    std::this_thread::sleep_for(std::chrono::milliseconds(millis));
-    if (keycode1==0x14) // Q for quit
-        return false;
+    while (true)
+    {
+        uint8_t* buffer = data_in_transfer(in_packetsize, target_device_address,endpoint_id, max_packet_size, direction);
+        uint8_t modifier_keys = buffer[0];
+        uint8_t reserved = buffer[1];
+        uint8_t keycode1 = buffer[2];
+        uint8_t keycode2 = buffer[3];
+        uint8_t keycode3 = buffer[4];
+        uint8_t keycode4 = buffer[5];
+        uint8_t keycode5 = buffer[6];
+        uint8_t keycode6 = buffer[7];
+        printf ("modifier_keys: %02X, keycode1:%02X, keycode2:%02X, keycode3:%02X, keycode4:%02X, keycode5:%02X, keycode6:%02X\n",modifier_keys,keycode1,keycode2,keycode3,keycode4,keycode5,keycode6);
+        free (buffer);
+        std::this_thread::sleep_for(std::chrono::milliseconds(millis));
+        if (keycode1==0x14) // Q for quit
+            return false;
+    }
     return true;
 }
 
@@ -654,24 +682,20 @@ bool read_boot_keyboard (uint8_t target_device_address,uint8_t endpoint_id,uint8
 #define HID_KEYBOARD 0x01
 #define HID_MOUSE 0x02
 int main(int argc, const char * argv[]) {
-    // insert code here...
     init_serial();
-    check_exists();
     reset_all();
-    set_usb_host_mode(CH375_USB_MODE_HOST);
-    if (waitInterrupt ()!=CH375_USB_INT_CONNECT)
-        error ("ERROR: host mode not succeeded\n");
-    set_usb_host_mode(CH375_USB_MODE_HOST_RESET);
-    set_usb_host_mode(CH375_USB_MODE_HOST);
-    if (waitInterrupt ()!=CH375_USB_INT_CONNECT)
-        error ("ERROR: host mode not succeeded 2\n");
-    sleep (0.2);
+    check_exists();
     
-    // 2-set to 1.5 Mhz low-speed mode, 0-set to 12 Mhz high-speed mode (default)
-    // set_speed (2);
+    //if (!set_usb_host_mode(CH375_USB_MODE_HOST))
+    //    error ("ERROR: host mode not succeeded\n");
+    set_usb_host_mode(CH375_USB_MODE_HOST_RESET);
+    if (!set_usb_host_mode(CH375_USB_MODE_HOST))
+        error ("ERROR: host mode not succeeded\n");
+    
     bool result = get_device_descriptor2();
     if (!result)
     {
+        // 2-set to 1.5 Mhz low-speed mode, 0-set to 12 Mhz high-speed mode (default)
         set_speed(2);
         result = get_device_descriptor2();
     }
@@ -683,6 +707,7 @@ int main(int argc, const char * argv[]) {
     
     printf ("Manufacturer ID: %s\n",get_string2 (DEV_ADDRESS,device.iManufacturer).c_str());
     printf ("Product ID: %s\n",get_string2 (DEV_ADDRESS,device.iProduct).c_str());
+    printf ("VID:PID: %04X:%04X\n",device.idVendor,device.idProduct);
     printf ("Serial: %s\n",get_string2 (DEV_ADDRESS,device.iSerialNumber).c_str());
     printf ("Device Class: %02X\n",device.bDeviceClass);
     printf ("Device SubClass: %02X\n",device.bDeviceSubClass);
@@ -748,16 +773,12 @@ int main(int argc, const char * argv[]) {
     set_configuration2(DEV_ADDRESS,configs[0].bConfigurationvalue);
     // set boot protocol for mouse and read it
     set_protocol2 (DEV_ADDRESS,BOOT_PROTOCOL,mouse_interface); // select boot protocol for our device
-    set_idle2(DEV_ADDRESS, 0x0, 0,mouse_interface); // wait on change
+    //set_idle2(DEV_ADDRESS, 0x0, 0,mouse_interface); // wait on change
     // set boot protocol for keyboard and read it
     set_protocol2 (DEV_ADDRESS,BOOT_PROTOCOL,keyboard_interface); // select boot protocol for our device
     set_idle2(DEV_ADDRESS, 0x80, 0,keyboard_interface); // scan every ~500ms
     
-    bool res = true;
-    while (res)
-    {
-        //res &= read_boot_keyboard (DEV_ADDRESS,keyboard_endpoint,keyboard_millis,keyboard_packetsize); // assume endpoint 2
-        res &= read_boot_mouse (DEV_ADDRESS,mouse_endpoint,mouse_millis,mouse_packetsize); // assume endpoint 2
-    }
+    read_boot_keyboard (DEV_ADDRESS,keyboard_endpoint,keyboard_millis,keyboard_packetsize); // assume endpoint 2
+    //read_boot_mouse (DEV_ADDRESS,mouse_endpoint,mouse_millis,mouse_packetsize); // assume endpoint 2
     return 0;
 }
